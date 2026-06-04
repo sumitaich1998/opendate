@@ -89,3 +89,36 @@ def test_style_brief_contains_signals():
     brief = persona.style_brief()
     assert "Tone: warm" in brief
     assert "climbing" in brief
+
+
+def test_persona_exemplars_selected():
+    ingest = IngestResult(
+        social_posts=["coffee snob alert, judging your order ☕"],
+        chat_messages=[
+            "ngl you're funnier than i expected, what's your go-to karaoke song?",
+            "haha okay that's a great take",
+        ],
+    )
+    profile = analyze_persona(ingest, voice="warm", router=None)
+    assert profile.exemplars
+    # The slang + question-bearing chat line should rank as the top exemplar.
+    assert "karaoke" in profile.exemplars[0]
+
+
+def test_voice_card_is_compact_and_informative():
+    profile = PersonaProfile(
+        tone="warm, sarcastic",
+        humor_style="dry",
+        slang=["lol", "ngl"],
+        emojis=["☕"],
+        avg_message_words=9,
+    )
+    card = profile.voice_card()
+    assert "Tone" in card and "warm, sarcastic" in card
+    # Compact: a handful of lines, not the full brief.
+    assert len(card.splitlines()) <= 7
+
+
+def test_exemplar_block_falls_back_to_samples():
+    profile = PersonaProfile(sample_messages=["hi there friend, good to meet you"])
+    assert "hi there friend" in profile.exemplar_block()

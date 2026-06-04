@@ -175,3 +175,80 @@ async def test_send_message_posts_body():
         assert json.loads(last.content.decode()) == {"message": "hello!"}
     finally:
         await conn.close()
+
+
+# --- robustness: pagination, retry/backoff, clear errors -------------------
+@pytest.mark.asyncio
+async def test_matches_pagination_follows_token():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/profile":
+            return httpx.Response(200, json={"data": {"_id": "me"}})
+        if request.url.path == "/v2/matches":
+            token = request.url.params.get("page_token")
+            if token is None:
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": {
+                            "matches": [{"_id": "m1", "person": {"_id": "p1", "name": "A"}}],
+                            "next_page_token": "pg2",
+                        }
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "matches": [{"_id": "m2", "person": {"_id": "p2", "name": "B"}}]
+                    }
+                },
+            )
+        return httpx.Response(404, json={})
+
+    conn = TinderConnector(auth_token="t", transport=httpx.MockTransport(handler))
+    try:
+        matches = await conn.get_matches(count=60)
+        assert [m.name for m in matches] == ["A", "B"]
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_retries_transient_5xx_then_succeeds():
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v2/recs/core":
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(503, json={})
+            return httpx.Response(200, json={"data": {"results": []}})
+        return httpx.Response(404, json={})
+
+    conn = TinderConnector(
+        auth_token="t", transport=httpx.MockTransport(handler), retry_backoff=0
+    )
+    try:
+        recs = await conn.get_recommendations()
+        assert recs == []
+        assert calls["n"] == 2  # retried the 503 once
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_raises_clear_error_after_exhausting_retries():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={})
+
+    conn = TinderConnector(
+        auth_token="t",
+        transport=httpx.MockTransport(handler),
+        retry_backoff=0,
+        max_retries=2,
+    )
+    try:
+        with pytest.raises(RuntimeError, match="Tinder API"):
+            await conn.get_recommendations()
+    finally:
+        await conn.close()

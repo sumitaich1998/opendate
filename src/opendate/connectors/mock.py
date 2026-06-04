@@ -148,7 +148,99 @@ def _seed_matches() -> list[Match]:
             ),
         ],
     )
-    return [fresh, active, stalled]
+    # Strong rapport, clearly warming toward meeting up -> proposing-a-date.
+    warming = Match(
+        id="match-noah",
+        person_id="cand-noah",
+        name="Noah",
+        bio="Trail runner, vinyl collector, terrible at chess but won't admit it.",
+        created_at=_ago(days=3),
+        last_activity_at=_ago(hours=5),
+        messages=[
+            Message(
+                id="n1",
+                match_id="match-noah",
+                sender="me",
+                text="Okay your vinyl shelf is doing a lot of heavy lifting for your whole personality, and I respect it.",
+                sent_at=_ago(days=2, hours=6),
+            ),
+            Message(
+                id="n2",
+                match_id="match-noah",
+                sender="them",
+                text="haha it really is my entire identity. what's the last record you actually played start to finish?",
+                sent_at=_ago(days=2, hours=5),
+            ),
+            Message(
+                id="n3",
+                match_id="match-noah",
+                sender="me",
+                text="Blue by Joni Mitchell, on a rainy Sunday, fully in my feelings. No regrets.",
+                sent_at=_ago(days=2, hours=4),
+            ),
+            Message(
+                id="n4",
+                match_id="match-noah",
+                sender="them",
+                text="okay that's a genuinely elite answer, i might be a little impressed",
+                sent_at=_ago(days=1, hours=8),
+            ),
+            Message(
+                id="n5",
+                match_id="match-noah",
+                sender="me",
+                text="I contain multitudes and excellent taste. What's your comfort album when everything's on fire?",
+                sent_at=_ago(days=1, hours=7),
+            ),
+            Message(
+                id="n6",
+                match_id="match-noah",
+                sender="them",
+                text="anything by Khruangbin, instant calm. we should genuinely compare record collections in person sometime, i'd love that",
+                sent_at=_ago(hours=5),
+            ),
+        ],
+    )
+    # Replies have gone flat/low-effort -> recovery is selected, safety backs off.
+    fading = Match(
+        id="match-rob",
+        person_id="cand-rob",
+        name="Rob",
+        bio="Gym, dog, gym.",
+        created_at=_ago(days=4),
+        last_activity_at=_ago(hours=2),
+        messages=[
+            Message(
+                id="r1",
+                match_id="match-rob",
+                sender="me",
+                text="Your dog is objectively cuter than you and I think you know it. What's the dog's name?",
+                sent_at=_ago(days=1),
+            ),
+            Message(
+                id="r2",
+                match_id="match-rob",
+                sender="them",
+                text="busy",
+                sent_at=_ago(hours=6),
+            ),
+            Message(
+                id="r3",
+                match_id="match-rob",
+                sender="me",
+                text="totally, no rush! catch you later",
+                sent_at=_ago(hours=5),
+            ),
+            Message(
+                id="r4",
+                match_id="match-rob",
+                sender="them",
+                text="k",
+                sent_at=_ago(hours=2),
+            ),
+        ],
+    )
+    return [fresh, active, stalled, warming, fading]
 
 
 class MockConnector:

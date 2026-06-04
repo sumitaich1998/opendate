@@ -123,3 +123,77 @@ def test_select_disinterest_recovers(skills_engine: SkillsEngine):
         SituationContext(has_messages=True, last_from_me=False, disinterest=True)
     )
     assert sel.primary.name == "conversation-recovery"
+
+
+# --- smarter selection: stage, signals, confidence, tie-break --------------
+def test_select_returns_confidence_and_reason(skills_engine: SkillsEngine):
+    sel = skills_engine.select(SituationContext(kind="match", has_messages=False))
+    assert 0.0 < sel.confidence <= 1.0
+    assert sel.reason
+    assert sel.decided_by == "heuristic"
+
+
+def test_select_approaching_in_early_stage(skills_engine: SkillsEngine):
+    sel = skills_engine.select(
+        SituationContext(
+            has_messages=True, last_from_me=False, num_messages=2, stage="opened"
+        )
+    )
+    assert sel.primary.name == "approaching"
+
+
+def test_select_storytelling_when_deep(skills_engine: SkillsEngine):
+    sel = skills_engine.select(
+        SituationContext(has_messages=True, last_from_me=False, num_messages=8)
+    )
+    assert sel.primary.name == "storytelling"
+
+
+def test_select_layers_all_modifiers(skills_engine: SkillsEngine):
+    sel = skills_engine.select(
+        SituationContext(has_messages=True, last_from_me=False, num_messages=4)
+    )
+    names = sel.skill_names
+    assert "consent-and-safety" in names
+    assert "relationship-intent-matching" in names
+    assert "persona-style-transfer" in names
+
+
+def test_llm_tiebreak_overrides_low_confidence(skills_engine: SkillsEngine):
+    class FakeRouter:
+        is_stub = False
+
+        def chat_json(self, system, user, **kw):
+            return {"skill": "storytelling"}
+
+    sel = skills_engine.select(
+        SituationContext(
+            has_messages=True, last_from_me=False, num_messages=2, stage="opened"
+        ),
+        router=FakeRouter(),
+    )
+    assert sel.primary.name == "storytelling"
+    assert sel.decided_by == "llm-tiebreak"
+
+
+def test_stub_router_skips_tiebreak(skills_engine: SkillsEngine, stub_router):
+    sel = skills_engine.select(
+        SituationContext(
+            has_messages=True, last_from_me=False, num_messages=2, stage="opened"
+        ),
+        router=stub_router,
+    )
+    assert sel.decided_by == "heuristic"  # offline stub never makes a network call
+
+
+def test_high_confidence_branch_ignores_tiebreak(skills_engine: SkillsEngine):
+    class LoudRouter:
+        is_stub = False
+
+        def chat_json(self, system, user, **kw):  # pragma: no cover - must not run
+            raise AssertionError("tie-break should not fire for clear situations")
+
+    sel = skills_engine.select(
+        SituationContext(kind="match", has_messages=False), router=LoudRouter()
+    )
+    assert sel.primary.name == "opener"

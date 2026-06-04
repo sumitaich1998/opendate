@@ -26,6 +26,7 @@ Self profile (for sender)   ``GET /profile``
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
@@ -40,6 +41,10 @@ log = get_logger("connectors.tinder")
 
 TINDER_BASE_URL = "https://api.gotinder.com"
 _MILES_TO_KM = 1.60934
+# Transient HTTP statuses worth retrying (rate-limit + server errors).
+_RETRY_STATUS = {429, 500, 502, 503, 504}
+_MATCH_PAGE = 60
+_MESSAGE_PAGE = 100
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -73,12 +78,16 @@ class TinderConnector:
         client: httpx.AsyncClient | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout: float = 30.0,
+        max_retries: int = 3,
+        retry_backoff: float = 0.5,
     ) -> None:
         if not auth_token:
             raise ValueError("TinderConnector requires an auth token")
         self._auth_token = auth_token
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        self._max_retries = max(1, max_retries)
+        self._retry_backoff = max(0.0, retry_backoff)
         self._self_id: str | None = None
         self._owns_client = client is None
         # ``transport`` lets tests inject an httpx.MockTransport while the
@@ -101,14 +110,56 @@ class TinderConnector:
     # Low-level helpers
     # ------------------------------------------------------------------ #
     async def _get(self, path: str, **kwargs: Any) -> dict[str, Any]:
-        response = await self._client.get(path, **kwargs)
-        response.raise_for_status()
-        return self._json(response)
+        return await self._request("GET", path, **kwargs)
 
     async def _post(self, path: str, json: Any) -> dict[str, Any]:
-        response = await self._client.post(path, json=json)
-        response.raise_for_status()
-        return self._json(response)
+        return await self._request("POST", path, json=json)
+
+    async def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        """Issue a request with retry + exponential backoff on transient errors.
+
+        Retries network/transport errors and ``429/5xx`` responses; surfaces a
+        clear :class:`RuntimeError` (never a raw httpx error) to callers.
+        """
+        last_error: Exception | None = None
+        for attempt in range(1, self._max_retries + 1):
+            try:
+                response = await self._client.request(method, path, **kwargs)
+            except httpx.TransportError as exc:  # incl. timeouts/connect errors
+                last_error = exc
+                log.warning(
+                    "Tinder %s %s transport error (attempt %d/%d): %s",
+                    method, path, attempt, self._max_retries, exc,
+                )
+            else:
+                if (
+                    response.status_code in _RETRY_STATUS
+                    and attempt < self._max_retries
+                ):
+                    last_error = httpx.HTTPStatusError(
+                        f"HTTP {response.status_code}",
+                        request=response.request,
+                        response=response,
+                    )
+                    log.warning(
+                        "Tinder %s %s -> %d, retrying (%d/%d)",
+                        method, path, response.status_code, attempt, self._max_retries,
+                    )
+                else:
+                    try:
+                        response.raise_for_status()
+                    except httpx.HTTPStatusError as exc:
+                        raise RuntimeError(
+                            f"Tinder API {method} {path} failed "
+                            f"({response.status_code})."
+                        ) from exc
+                    return self._json(response)
+            if attempt < self._max_retries and self._retry_backoff > 0:
+                await asyncio.sleep(self._retry_backoff * (2 ** (attempt - 1)))
+        raise RuntimeError(
+            f"Tinder API {method} {path} failed after {self._max_retries} attempts: "
+            f"{last_error}"
+        )
 
     @staticmethod
     def _json(response: httpx.Response) -> dict[str, Any]:
@@ -255,25 +306,51 @@ class TinderConnector:
 
     async def get_matches(self, count: int = 60) -> list[Match]:
         await self._self_user_id()
-        data = await self._get("/v2/matches", params={"count": count})
-        raw_matches = data.get("data", {}).get("matches", []) or []
-        return [self._parse_match(m) for m in raw_matches if isinstance(m, dict)]
+        matches: list[Match] = []
+        page_token: str | None = None
+        # Follow ``next_page_token`` until we have enough (or run out of pages).
+        while len(matches) < count:
+            params: dict[str, Any] = {"count": min(count, _MATCH_PAGE)}
+            if page_token:
+                params["page_token"] = page_token
+            data = await self._get("/v2/matches", params=params)
+            block = data.get("data", {}) if isinstance(data.get("data"), dict) else {}
+            raw_matches = block.get("matches", []) or []
+            matches.extend(
+                self._parse_match(m) for m in raw_matches if isinstance(m, dict)
+            )
+            page_token = block.get("next_page_token")
+            if not page_token or not raw_matches:
+                break
+        return matches[:count]
 
     async def get_messages(self, match_id: str, count: int = 100) -> list[Message]:
         await self._self_user_id()
-        data = await self._get(
-            f"/v2/matches/{match_id}/messages", params={"count": count}
-        )
-        raw_messages = data.get("data", {}).get("messages", []) or []
-        # Tinder returns newest-first; expose oldest-first for natural reading.
         person_id = ""
-        messages = [
-            self._parse_message(m, match_id, person_id)
-            for m in raw_messages
-            if isinstance(m, dict)
-        ]
-        messages.sort(key=lambda m: m.sent_at or datetime.min.replace(tzinfo=timezone.utc))
-        return messages
+        collected: list[Message] = []
+        page_token: str | None = None
+        while len(collected) < count:
+            params: dict[str, Any] = {"count": min(count, _MESSAGE_PAGE)}
+            if page_token:
+                params["page_token"] = page_token
+            data = await self._get(
+                f"/v2/matches/{match_id}/messages", params=params
+            )
+            block = data.get("data", {}) if isinstance(data.get("data"), dict) else {}
+            raw_messages = block.get("messages", []) or []
+            collected.extend(
+                self._parse_message(m, match_id, person_id)
+                for m in raw_messages
+                if isinstance(m, dict)
+            )
+            page_token = block.get("next_page_token")
+            if not page_token or not raw_messages:
+                break
+        # Tinder returns newest-first; expose oldest-first for natural reading.
+        collected.sort(
+            key=lambda m: m.sent_at or datetime.min.replace(tzinfo=timezone.utc)
+        )
+        return collected[:count]
 
     async def send_message(self, match_id: str, text: str) -> Message:
         data = await self._post(f"/user/matches/{match_id}", json={"message": text})

@@ -16,10 +16,11 @@ next one. Selections are resolved through :mod:`opendate.llm.providers`.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
-from dataclasses import dataclass, field
-from typing import Callable, Iterable, Iterator, Mapping, Protocol, Sequence
+from dataclasses import dataclass
+from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol, Sequence
 
 from ..utils.logging import get_logger, register_secret
 from .providers import ResolvedModel, provider_ready, resolve_model
@@ -31,6 +32,7 @@ __all__ = [
     "LiteLLMBackend",
     "EchoBackend",
     "LLMRouter",
+    "extract_json",
 ]
 
 log = get_logger("llm.router")
@@ -47,6 +49,30 @@ class LLMResult:
     provider: str
     model: str
     raw: object | None = None
+    usage: dict[str, int] | None = None
+
+
+def extract_json(text: str) -> dict[str, Any] | None:
+    """Best-effort: pull the first JSON object out of ``text`` (or return None).
+
+    Tolerates code fences and chatty preambles around the JSON, which real
+    models love to add despite instructions.
+    """
+    if not text:
+        return None
+    # Strip ```json fences if present.
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
+    blob = fenced.group(1) if fenced else None
+    if blob is None:
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        blob = match.group(0) if match else None
+    if blob is None:
+        return None
+    try:
+        data = json.loads(blob)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 class LLMBackend(Protocol):
@@ -71,6 +97,23 @@ class LLMBackend(Protocol):
         max_tokens: int | None = None,
         timeout: float | None = None,
     ) -> Iterator[str]: ...
+
+
+def _usage_from_response(response: object) -> dict[str, int] | None:
+    """Defensively pull token counts out of a provider response object."""
+    usage = getattr(response, "usage", None)
+    if usage is None and isinstance(response, dict):
+        usage = response.get("usage")
+    if usage is None:
+        return None
+    out: dict[str, int] = {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = getattr(usage, key, None)
+        if value is None and isinstance(usage, dict):
+            value = usage.get(key)
+        if isinstance(value, (int, float)):
+            out[key] = int(value)
+    return out or None
 
 
 class LiteLLMBackend:
@@ -116,6 +159,7 @@ class LiteLLMBackend:
             provider=resolved.provider,
             model=resolved.model,
             raw=response,
+            usage=_usage_from_response(response),
         )
 
     def stream(
@@ -278,6 +322,27 @@ class LLMRouter:
         self.retry_backoff = retry_backoff
         self.timeout = timeout
         self.is_stub = is_stub
+        # Cumulative token/usage accounting across the router's lifetime.
+        self.usage: dict[str, int] = {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+
+    def _record_usage(self, result: LLMResult) -> None:
+        self.usage["calls"] += 1
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            if result.usage and key in result.usage:
+                self.usage[key] += int(result.usage[key])
+        if result.usage:
+            log.debug(
+                "LLM usage provider=%s model=%s tokens=%s (cumulative total=%d)",
+                result.provider,
+                result.model,
+                result.usage,
+                self.usage["total_tokens"],
+            )
 
     # ------------------------------------------------------------------ #
     # Construction
@@ -339,13 +404,15 @@ class LLMRouter:
         for index, selection in enumerate(self.selections):
             for attempt in range(1, self.max_retries + 1):
                 try:
-                    return self.backend.complete(
+                    result = self.backend.complete(
                         selection,
                         messages,
                         temperature=temperature,
                         max_tokens=max_tokens,
                         timeout=self.timeout,
                     )
+                    self._record_usage(result)
+                    return result
                 except Exception as exc:  # noqa: BLE001 - we retry/fall back
                     last_error = exc
                     log.warning(
@@ -356,7 +423,10 @@ class LLMRouter:
                         exc,
                     )
                     if attempt < self.max_retries:
-                        time.sleep(self.retry_backoff * attempt)
+                        # Exponential backoff: backoff, 2x, 4x, ... (+ jitter).
+                        delay = self.retry_backoff * (2 ** (attempt - 1))
+                        if delay > 0:
+                            time.sleep(delay)
             if index < len(self.selections) - 1:
                 log.info(
                     "Falling back from %s to %s",
@@ -393,6 +463,46 @@ class LLMRouter:
         return self.complete(
             messages, temperature=temperature, max_tokens=max_tokens
         ).text
+
+    # ------------------------------------------------------------------ #
+    # Structured JSON (request + parse, with a safe fallback)
+    # ------------------------------------------------------------------ #
+    def complete_json(
+        self,
+        messages: Sequence[Message],
+        *,
+        temperature: float | None = 0.0,
+        max_tokens: int | None = None,
+        default: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Run a completion and parse the reply as JSON (``default`` on failure)."""
+        try:
+            result = self.complete(
+                messages, temperature=temperature, max_tokens=max_tokens
+            )
+        except Exception as exc:  # noqa: BLE001 - degrade gracefully
+            log.warning("complete_json failed: %s", exc)
+            return default
+        parsed = extract_json(result.text)
+        return parsed if parsed is not None else default
+
+    def chat_json(
+        self,
+        system: str,
+        user: str,
+        *,
+        temperature: float | None = 0.0,
+        max_tokens: int | None = None,
+        default: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Convenience JSON variant of :meth:`chat` with a safe fallback."""
+        messages: list[Message] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": user})
+        return self.complete_json(
+            messages, temperature=temperature, max_tokens=max_tokens, default=default
+        )
 
     # ------------------------------------------------------------------ #
     # Async variants (used by the orchestrator)

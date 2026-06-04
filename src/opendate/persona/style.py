@@ -63,15 +63,24 @@ class StyleTransfer:
         system_parts = [
             "You rewrite a dating-app message so it sounds exactly like a specific "
             "person, preserving the meaning and intent precisely. Change only the "
-            "voice — never add facts, claims, or change the ask. Return ONLY the "
-            "rewritten message, with no quotes or commentary.",
+            "voice — never add facts, claims, or change the ask. Match their "
+            "message length, emoji habits, casing, and slang. Do not invent new "
+            "details. Return ONLY the rewritten message, with no quotes or "
+            "commentary.",
         ]
         if guidance:
             system_parts.append("Playbook:\n" + guidance)
         system_parts.append("The person's voice:\n" + persona.style_brief())
+        exemplars = persona.exemplar_block()
+        if exemplars:
+            system_parts.append(
+                "Real examples of how they actually text (mimic this sound, not "
+                "the content):\n" + exemplars
+            )
         system = "\n\n".join(system_parts)
         user = (
-            "Rewrite this draft in the person's voice (same meaning, their sound):\n"
+            "Rewrite this draft in the person's voice (same meaning, their sound). "
+            "Keep it roughly the same length:\n"
             f"<<<DRAFT>>>{draft}<<<END>>>"
         )
         result = router.chat(system, user, temperature=0.7, max_tokens=400)

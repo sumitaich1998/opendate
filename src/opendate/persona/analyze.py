@@ -18,7 +18,7 @@ import json
 import re
 from collections import Counter
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 from pydantic import BaseModel, Field
 
@@ -135,6 +135,10 @@ class PersonaProfile(BaseModel):
     avg_message_chars: float = 0.0
 
     sample_messages: list[str] = Field(default_factory=list)
+    exemplars: list[str] = Field(
+        default_factory=list,
+        description="Representative real messages used as few-shot voice examples.",
+    )
     sources: dict[str, int] = Field(default_factory=dict)
     blend: dict[str, float] = Field(default_factory=dict)
     generated_with_llm: bool = False
@@ -173,6 +177,37 @@ class PersonaProfile(BaseModel):
             samples = " | ".join(self.sample_messages[:3])
             lines.append(f"Sample lines: {samples}")
         return "\n".join(lines)
+
+    def voice_card(self) -> str:
+        """A compact, at-a-glance summary of the user's texting voice."""
+        emoji_freq = (
+            "rarely"
+            if self.emoji_rate < 0.2
+            else "often"
+            if self.emoji_rate >= 1
+            else "sometimes"
+        )
+        case = "lowercase" if self.lowercase_ratio > 0.5 else "normal case"
+        lines = [
+            f"🗣  Tone: {self.tone}",
+            f"😄  Humor: {self.humor_style}",
+            f"✍️  Cadence: {self.cadence} (~{self.avg_message_words:.0f} words)",
+            f"#️⃣  Emoji: {emoji_freq}"
+            + (f" ({' '.join(self.emojis[:5])})" if self.emojis else "")
+            + f"; {case}",
+        ]
+        if self.slang:
+            lines.append("💬  Says: " + ", ".join(self.slang[:6]))
+        if self.exemplars:
+            lines.append("⭐  Sounds like: " + self.exemplars[0])
+        return "\n".join(lines)
+
+    def exemplar_block(self, limit: int = 4) -> str:
+        """Few-shot examples of the user's real voice for prompting."""
+        picks = self.exemplars or self.sample_messages
+        if not picks:
+            return ""
+        return "\n".join(f"- {ex}" for ex in picks[:limit])
 
     def save(self, path: str | Path) -> Path:
         path = Path(path)
@@ -237,6 +272,55 @@ def _cadence(avg_words: float) -> str:
     if avg_words:
         return "longer, detailed texts"
     return "medium-length texts"
+
+
+def _pick_exemplars(
+    chats: Sequence[str],
+    social: Sequence[str],
+    *,
+    slang: Sequence[str],
+    emojis: Sequence[str],
+    limit: int = 5,
+) -> list[str]:
+    """Choose representative real messages to use as few-shot voice examples.
+
+    Prefers conversational chat lines, of a texty length (3-30 words), and
+    rewards lines that carry the user's signature slang/emoji. Falls back to
+    social posts when there aren't enough chats. Fully deterministic.
+    """
+    slang_set = {s.lower() for s in slang}
+    emoji_set = set(emojis)
+
+    def score(text: str) -> float:
+        words = text.split()
+        n = len(words)
+        if n < 3 or n > 40:
+            return -1.0
+        s = 1.0
+        if 5 <= n <= 22:  # the conversational sweet spot
+            s += 0.5
+        lowered = text.lower()
+        if any(tok in slang_set for tok in (w.strip(".,!?") for w in lowered.split())):
+            s += 0.6
+        if any(e in text for e in emoji_set):
+            s += 0.4
+        if "?" in text:  # asks a question — engaging
+            s += 0.2
+        return s
+
+    seen: set[str] = set()
+    ranked: list[tuple[float, int, str]] = []
+    # ``order`` keeps the sort stable & favours chats over social posts.
+    for order, text in enumerate([*chats, *social]):
+        key = " ".join(text.lower().split())
+        if key in seen:
+            continue
+        seen.add(key)
+        value = score(text)
+        if value > 0:
+            ranked.append((value, order, text))
+    ranked.sort(key=lambda t: (-t[0], t[1]))
+    return [text for _, _, text in ranked[:limit]]
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
@@ -361,6 +445,7 @@ def analyze_persona(
     tone = voice.strip() if voice.strip() else "warm and curious"
 
     sample_messages = (chats[:2] + social[:2])[:4]
+    exemplars = _pick_exemplars(chats, social, slang=slang, emojis=emojis)
 
     profile = PersonaProfile(
         tone=tone,
@@ -379,6 +464,7 @@ def analyze_persona(
         avg_message_words=round(avg_words, 1),
         avg_message_chars=round(rate("avg_chars"), 1),
         sample_messages=sample_messages,
+        exemplars=exemplars,
         sources={
             "social_posts": len(social),
             "chat_messages": len(chats),

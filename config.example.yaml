@@ -18,12 +18,14 @@ preferences:
   looking_for: long-term            # casual | dating | long-term
   also_open_to: [dating]
   partner_traits: [witty, outdoorsy, ambitious, kind]
+  must_haves: []                    # hard requirements (empty = none)
   dealbreakers: [smoking]
   interests: [climbing, live music, cooking, travel]
   age_range:
     min: 26
     max: 34
   distance_km: 25
+  like_threshold: 0.55              # min screening confidence (0-1) to like
   voice: warm, curious, a little sarcastic
 
 # --- Which model to use ---------------------------------------------------
@@ -58,4 +60,19 @@ safety:
   require_consent_checks: true
   allow_explicit: false
   backoff_on_disinterest: true
+  refuse_minors: true               # hard-block if they may be under 18
+  refuse_on_discomfort: true        # back off on discomfort/withdrawal
   max_followups_without_reply: 2
+
+# --- Pacing & rate limits (anti-spam) -------------------------------------
+pacing:
+  cooldown_hours: 8                 # min hours between messages to one match
+  reengage_after_days: 3            # wait before reviving an unanswered thread
+  max_daily_actions: 25             # cap likes/passes/messages per 24h
+  never_double_text: true
+
+# --- Message quality (self-critique loop) ---------------------------------
+quality:
+  self_critique: true               # score drafts; regenerate weak ones once
+  min_score: 0.5
+  max_regenerations: 1

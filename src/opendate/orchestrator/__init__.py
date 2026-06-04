@@ -9,6 +9,12 @@ from __future__ import annotations
 
 from .loop import Orchestrator, PlannedAction, build_situation, score_candidate
 from .safety import SafetyDecision, SafetyGuard
+from .state import (
+    ConversationStage,
+    ConversationState,
+    ConversationStore,
+    compute_stage,
+)
 
 __all__ = [
     "Orchestrator",
@@ -17,4 +23,8 @@ __all__ = [
     "score_candidate",
     "SafetyGuard",
     "SafetyDecision",
+    "ConversationStage",
+    "ConversationState",
+    "ConversationStore",
+    "compute_stage",
 ]

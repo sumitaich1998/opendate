@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from opendate.config import LLMConfig, LLMFallback
+from opendate.config import LLMConfig
 from opendate.llm.providers import (
     PROVIDER_REGISTRY,
     list_providers,
@@ -100,12 +100,6 @@ def test_router_fallback_on_failure():
         def stream(self, *a, **k):  # pragma: no cover - not used here
             yield "ok"
 
-    cfg = LLMConfig(
-        provider="openai",
-        model="gpt-4o-mini",
-        max_retries=1,
-        fallbacks=[LLMFallback(provider="deepseek", model="deepseek-chat")],
-    )
     selections = [
         resolve_model("openai", "gpt-4o-mini", {}),
         resolve_model("deepseek", "deepseek-chat", {}),
@@ -146,3 +140,65 @@ def test_echo_backend_style_transfer_echo():
         [{"role": "user", "content": "rewrite this <<<DRAFT>>>hello you<<<END>>>"}],
     )
     assert result.text == "hello you"
+
+
+# --- robustness: JSON helper, usage accounting, exponential backoff --------
+def _responder_router(responder):
+    backend = EchoBackend(responder=responder)
+    return LLMRouter(
+        backend, [resolve_model("openai", "gpt-4o-mini", {})], is_stub=True,
+        retry_backoff=0,
+    )
+
+
+def test_extract_json_variants():
+    from opendate.llm.router import extract_json
+
+    assert extract_json('```json\n{"a": 1}\n```') == {"a": 1}
+    assert extract_json('noise before {"b": 2} and after') == {"b": 2}
+    assert extract_json("definitely not json") is None
+
+
+def test_chat_json_parses():
+    router = _responder_router(lambda msgs: '{"score": 0.7, "ok": true}')
+    assert router.chat_json("s", "u") == {"score": 0.7, "ok": True}
+
+
+def test_chat_json_safe_fallback_on_garbage():
+    router = _responder_router(lambda msgs: "totally not json at all")
+    assert router.chat_json("s", "u", default={"score": 0.5}) == {"score": 0.5}
+
+
+def test_router_tracks_usage_calls():
+    router = _responder_router(lambda msgs: "hello")
+    router.chat("s", "u")
+    router.chat("s", "u")
+    assert router.usage["calls"] == 2
+
+
+def test_exponential_backoff_between_retries(monkeypatch):
+    import opendate.llm.router as router_mod
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(router_mod.time, "sleep", lambda s: sleeps.append(s))
+
+    class Flaky:
+        def __init__(self):
+            self.n = 0
+
+        def complete(self, resolved, messages, **kwargs):
+            self.n += 1
+            if self.n < 3:
+                raise RuntimeError("boom")
+            return LLMResult("ok", resolved.provider, resolved.model)
+
+        def stream(self, *a, **k):  # pragma: no cover - unused
+            yield "ok"
+
+    router = LLMRouter(
+        Flaky(), [resolve_model("openai", "m", {})], max_retries=3, retry_backoff=0.5
+    )
+    result = router.complete([{"role": "user", "content": "x"}])
+    assert result.text == "ok"
+    # Backoff doubles: 0.5 * 2^0, then 0.5 * 2^1.
+    assert sleeps == [0.5, 1.0]

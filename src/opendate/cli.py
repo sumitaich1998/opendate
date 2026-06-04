@@ -38,6 +38,7 @@ from .llm.providers import list_providers, provider_ready
 from .llm.router import LLMRouter
 from .orchestrator.loop import Orchestrator, score_candidate
 from .orchestrator.safety import SafetyGuard
+from .orchestrator.state import ConversationStore
 from .persona.analyze import PersonaProfile, build_persona, load_profile
 from .skills.engine import SkillsEngine
 from .utils.logging import configure_logging, get_logger
@@ -249,7 +250,8 @@ def persona_show(ctx: typer.Context) -> None:
         console.print(f"[yellow]No persona at {path}. Run `opendate persona build`.[/]")
         raise typer.Exit(code=1)
     profile = load_profile(path)
-    console.print(Panel(profile.style_brief(), title="Persona", border_style="blue"))
+    console.print(Panel(profile.voice_card(), title="Voice card", border_style="blue"))
+    console.print(Panel(profile.style_brief(), title="Persona detail", border_style="blue"))
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +349,7 @@ def run(
         safety=guard,
         console=console,
         interactive=interactive,
+        store=ConversationStore(config.state_path()),
     )
 
     mode = "MOCK" if state.mock else config.source.upper()

@@ -56,6 +56,24 @@ _HARD_STOP = re.compile(
     re.IGNORECASE,
 )
 
+# Discomfort / withdrawal signals — back off even if not a hard "stop".
+_DISCOMFORT = re.compile(
+    r"\b(uncomfortable|creep(?:y|er)?|you'?re\s+being\s+weird|this\s+is\s+weird|"
+    r"too\s+much|reporting\s+you|i'?ll\s+report|i\s+blocked|gonna\s+block|"
+    r"i\s+have\s+a\s+(?:boyfriend|girlfriend|partner|husband|wife)|"
+    r"back\s+off|stop\s+being\s+weird)\b",
+    re.IGNORECASE,
+)
+
+# Signals the other person may be a minor (hard block when refuse_minors).
+_MINOR = re.compile(
+    r"\b(?:i'?m|i\s+am|im|only|turning|just\s+turned)\s*(1[0-7])\b"
+    r"|\b(1[0-7])\s*(?:yo|y/?o|years?\s*old)\b"
+    r"|\b(underage|under\s*18|jailbait|high\s*school(?:er)?|highschool|"
+    r"middle\s*school(?:er)?)\b",
+    re.IGNORECASE,
+)
+
 # The other person inviting escalation (used to permit allowed explicit content).
 _INVITE = re.compile(
     r"\b(send\s+me|i\s+want\s+you|come\s+over|let'?s\s+(?:meet|hook)|"
@@ -72,6 +90,7 @@ class SafetyDecision:
     severity: str = "ok"  # "ok" | "soft" | "hard"
     reasons: list[str] = field(default_factory=list)
     revised_text: str | None = None
+    category: str = ""  # e.g. minor | explicit | pressure | discomfort | cooldown
 
     @property
     def blocked(self) -> bool:
@@ -95,61 +114,79 @@ class SafetyGuard:
     # Public API
     # ------------------------------------------------------------------ #
     def check_message(self, text: str, context: Any | None = None) -> SafetyDecision:
-        """Check a proposed outgoing message. Heuristics are authoritative."""
-        reasons: list[str] = []
+        """Check a proposed outgoing message. Heuristics are authoritative.
+
+        This is a *blocking gate*: every send must pass it. Each block is logged
+        with its reason and category for an auditable trail.
+        """
         text = text or ""
+        their = getattr(context, "their_last_text", None) if context else None
 
         allow_explicit = getattr(self.config, "allow_explicit", False)
         backoff = getattr(self.config, "backoff_on_disinterest", True)
+        refuse_minors = getattr(self.config, "refuse_minors", True)
+        refuse_discomfort = getattr(self.config, "refuse_on_discomfort", True)
+
+        # 0) Possible minor -> hard block, regardless of message content.
+        if refuse_minors and their and _MINOR.search(their or ""):
+            return self._block(
+                "hard",
+                ["The other person may be a minor — refusing to engage."],
+                "minor",
+            )
 
         # 1) Hostility -> always a hard block.
         if _HOSTILE.search(text):
-            return SafetyDecision(
-                allowed=False,
-                severity="hard",
-                reasons=["Message contains hostile or demeaning language."],
+            return self._block(
+                "hard", ["Message contains hostile or demeaning language."], "hostility"
             )
 
         # 2) Deception markers -> hard block.
         if _DECEPTION.search(text):
-            return SafetyDecision(
-                allowed=False,
-                severity="hard",
-                reasons=["Message appears deceptive; OpenDate must stay honest."],
+            return self._block(
+                "hard",
+                ["Message appears deceptive; OpenDate must stay honest."],
+                "deception",
             )
 
         # 3) Explicit content -> blocked unless allowed AND clearly invited.
         if _EXPLICIT.search(text):
-            invited = bool(context and getattr(context, "their_last_text", None) and
-                           _INVITE.search(context.their_last_text or ""))
+            invited = bool(their and _INVITE.search(their or ""))
             if not (allow_explicit and invited):
-                return SafetyDecision(
-                    allowed=False,
-                    severity="hard",
-                    reasons=[
+                return self._block(
+                    "hard",
+                    [
                         "Explicit content blocked (not allowed and/or not clearly "
                         "consented to)."
                     ],
+                    "explicit",
                 )
 
         # 4) Pressure / coercion -> soft block (don't send; needs a rewrite).
         if _PRESSURE.search(text):
-            reasons.append("Message reads as pressuring; easing off instead.")
-            return SafetyDecision(allowed=False, severity="soft", reasons=reasons)
+            return self._block(
+                "soft", ["Message reads as pressuring; easing off instead."], "pressure"
+            )
 
-        # 5) Back off on disinterest from the other person.
-        if context is not None and backoff:
-            if getattr(context, "hard_stop", False):
-                return SafetyDecision(
-                    allowed=False,
-                    severity="hard",
-                    reasons=["They asked to stop / aren't interested — backing off."],
+        # 5) Back off on the other person's signals.
+        if context is not None:
+            if getattr(context, "hard_stop", False) or (their and _HARD_STOP.search(their)):
+                return self._block(
+                    "hard",
+                    ["They asked to stop / aren't interested — backing off."],
+                    "hard-stop",
                 )
-            if getattr(context, "disinterest", False):
-                return SafetyDecision(
-                    allowed=False,
-                    severity="soft",
-                    reasons=["Signs of disinterest — backing off rather than pushing."],
+            if refuse_discomfort and their and _DISCOMFORT.search(their):
+                return self._block(
+                    "hard",
+                    ["They signaled discomfort or withdrawal — backing off."],
+                    "discomfort",
+                )
+            if backoff and getattr(context, "disinterest", False):
+                return self._block(
+                    "soft",
+                    ["Signs of disinterest — backing off rather than pushing."],
+                    "disinterest",
                 )
 
         # 6) Optional LLM second-pass review (only refines; never un-blocks above).
@@ -160,9 +197,51 @@ class SafetyGuard:
         ):
             verdict = self._llm_review(text, context)
             if verdict is not None and not verdict.allowed:
+                log.warning("Safety LLM-review block: %s", "; ".join(verdict.reasons))
                 return verdict
 
-        return SafetyDecision(allowed=True, severity="ok", reasons=reasons or ["ok"])
+        return SafetyDecision(allowed=True, severity="ok", reasons=["ok"])
+
+    def _block(self, severity: str, reasons: list[str], category: str) -> SafetyDecision:
+        """Build a blocked decision and log it (auditable trail)."""
+        log.warning("Safety block [%s/%s]: %s", category, severity, "; ".join(reasons))
+        return SafetyDecision(
+            allowed=False, severity=severity, reasons=reasons, category=category
+        )
+
+    # ------------------------------------------------------------------ #
+    # Pacing / rate limits (escalation guard)
+    # ------------------------------------------------------------------ #
+    def check_pacing(
+        self,
+        *,
+        cooldown_remaining: float = 0.0,
+        followups_without_reply: int = 0,
+        daily_budget_left: int = 1,
+    ) -> SafetyDecision:
+        """Block sends that would be spammy (cooldown / daily cap / over-eager).
+
+        Pure inputs (computed by the orchestrator from persisted state) keep the
+        guard decoupled from storage while still owning the rate-limit policy.
+        """
+        if daily_budget_left <= 0:
+            return self._block(
+                "soft", ["Daily action limit reached — pausing for now."], "rate-limit"
+            )
+        max_follow = getattr(self.config, "max_followups_without_reply", 2)
+        if followups_without_reply > max_follow:
+            return self._block(
+                "soft",
+                [f"Already followed up {followups_without_reply}x without a reply."],
+                "escalation",
+            )
+        if cooldown_remaining > 0:
+            return self._block(
+                "soft",
+                [f"Cooldown active (~{cooldown_remaining:.1f}h before next message)."],
+                "cooldown",
+            )
+        return SafetyDecision(allowed=True, severity="ok", reasons=["pace ok"])
 
     # ------------------------------------------------------------------ #
     # Optional LLM review

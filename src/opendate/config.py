@@ -34,6 +34,8 @@ __all__ = [
     "PersonaBlend",
     "PersonaSources",
     "SafetyConfig",
+    "PacingConfig",
+    "QualityConfig",
     "AppConfig",
     "Secrets",
     "load_config",
@@ -76,16 +78,28 @@ class Preferences(BaseModel):
     looking_for: RelationshipIntent = RelationshipIntent.DATING
     also_open_to: list[RelationshipIntent] = Field(default_factory=list)
     partner_traits: list[str] = Field(default_factory=list)
+    must_haves: list[str] = Field(
+        default_factory=list,
+        description="Hard requirements; a candidate missing all of these is passed.",
+    )
     dealbreakers: list[str] = Field(default_factory=list)
     interests: list[str] = Field(default_factory=list)
     age_range: AgeRange = Field(default_factory=lambda: AgeRange(min=25, max=40))
     distance_km: int = Field(default=40, ge=1, le=500)
+    like_threshold: float = Field(
+        default=0.55,
+        ge=0.0,
+        le=1.0,
+        description="Minimum screening confidence (0-1) required to like.",
+    )
     voice: str = Field(
         default="warm, curious, a little playful",
         description="Stated tone for your messages (a persona signal).",
     )
 
-    @field_validator("partner_traits", "dealbreakers", "interests", mode="before")
+    @field_validator(
+        "partner_traits", "must_haves", "dealbreakers", "interests", mode="before"
+    )
     @classmethod
     def _coerce_csv(cls, value: Any) -> Any:
         # Allow a comma-separated string in YAML as a convenience.
@@ -178,7 +192,63 @@ class SafetyConfig(BaseModel):
     require_consent_checks: bool = True
     allow_explicit: bool = False
     backoff_on_disinterest: bool = True
+    refuse_minors: bool = Field(
+        default=True,
+        description="Hard-block messaging if the other party may be a minor.",
+    )
+    refuse_on_discomfort: bool = Field(
+        default=True,
+        description="Back off if the other person signals discomfort or withdrawal.",
+    )
     max_followups_without_reply: int = Field(default=2, ge=0, le=10)
+
+
+# ---------------------------------------------------------------------------
+# Pacing / rate limits
+# ---------------------------------------------------------------------------
+class PacingConfig(BaseModel):
+    """Guards against spammy behaviour: cooldowns, daily caps, no double-texting."""
+
+    cooldown_hours: float = Field(
+        default=8.0,
+        ge=0.0,
+        le=240.0,
+        description="Minimum hours between two messages we send to the same match.",
+    )
+    reengage_after_days: float = Field(
+        default=3.0,
+        ge=0.5,
+        le=60.0,
+        description="Wait this long after our last unanswered message before re-engaging.",
+    )
+    max_daily_actions: int = Field(
+        default=25,
+        ge=1,
+        le=500,
+        description="Cap on total likes/passes/messages per rolling 24h.",
+    )
+    never_double_text: bool = Field(
+        default=True,
+        description="Never send again while we're the last to have messaged (until re-engage).",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Message quality
+# ---------------------------------------------------------------------------
+class QualityConfig(BaseModel):
+    """Controls the self-critique / regenerate loop on generated messages."""
+
+    self_critique: bool = Field(
+        default=True, description="Score drafts and regenerate weak ones once."
+    )
+    min_score: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Drafts scoring below this are regenerated (if budget allows).",
+    )
+    max_regenerations: int = Field(default=1, ge=0, le=3)
 
 
 # ---------------------------------------------------------------------------
@@ -194,11 +264,17 @@ class AppConfig(BaseModel):
     max_actions_per_cycle: int = Field(default=5, ge=1, le=100)
     max_screen_per_cycle: int = Field(default=10, ge=0, le=100)
     log_level: str = "INFO"
+    data_dir: str = Field(
+        default="data",
+        description="Directory for persisted conversation state + decision logs.",
+    )
 
     preferences: Preferences = Field(default_factory=Preferences)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     persona: PersonaSources = Field(default_factory=PersonaSources)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
+    pacing: PacingConfig = Field(default_factory=PacingConfig)
+    quality: QualityConfig = Field(default_factory=QualityConfig)
 
     @field_validator("source")
     @classmethod
@@ -206,6 +282,19 @@ class AppConfig(BaseModel):
         if value not in {"tinder", "mock"}:
             raise ValueError("source must be 'tinder' or 'mock'")
         return value
+
+    @property
+    def reengage_after_days(self) -> float:
+        """Convenience alias kept stable for the orchestrator."""
+        return self.pacing.reengage_after_days
+
+    def state_path(self) -> Path:
+        """Where per-match conversation state is persisted."""
+        return Path(self.data_dir) / "conversations.json"
+
+    def decisions_path(self) -> Path:
+        """Where structured per-action decisions are appended (JSONL)."""
+        return Path(self.data_dir) / "decisions.jsonl"
 
 
 # ---------------------------------------------------------------------------
@@ -349,12 +438,14 @@ preferences:
   looking_for: long-term            # casual | dating | long-term
   also_open_to: [dating]
   partner_traits: [witty, outdoorsy, ambitious, kind]
+  must_haves: []                    # hard requirements (empty = none)
   dealbreakers: [smoking]
   interests: [climbing, live music, cooking, travel]
   age_range:
     min: 26
     max: 34
   distance_km: 25
+  like_threshold: 0.55              # min screening confidence (0-1) to like
   voice: warm, curious, a little sarcastic
 
 # --- Which model to use ---------------------------------------------------
@@ -389,7 +480,22 @@ safety:
   require_consent_checks: true
   allow_explicit: false
   backoff_on_disinterest: true
+  refuse_minors: true               # hard-block if they may be under 18
+  refuse_on_discomfort: true        # back off on discomfort/withdrawal
   max_followups_without_reply: 2
+
+# --- Pacing & rate limits (anti-spam) -------------------------------------
+pacing:
+  cooldown_hours: 8                 # min hours between messages to one match
+  reengage_after_days: 3            # wait before reviving an unanswered thread
+  max_daily_actions: 25             # cap likes/passes/messages per 24h
+  never_double_text: true
+
+# --- Message quality (self-critique loop) ---------------------------------
+quality:
+  self_critique: true               # score drafts; regenerate weak ones once
+  min_score: 0.5
+  max_regenerations: 1
 """
 
 EXAMPLE_ENV = """\
