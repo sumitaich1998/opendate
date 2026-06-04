@@ -1,0 +1,15 @@
+# OpenDate runtime dependencies (versions resolved with pip; lower bounds pinned).
+# Install with:  pip install -r requirements.txt
+# For an editable dev install (preferred), use:  pip install -e ".[dev]"
+
+litellm>=1.87.0
+httpx>=0.28.1
+pydantic>=2.13.0
+pydantic-settings>=2.14.0
+pyyaml>=6.0.2
+rich>=15.0.0
+typer>=0.25.0
+
+# --- Dev / testing (offline) ---
+pytest>=9.0.0
+pytest-asyncio>=1.4.0

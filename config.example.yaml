@@ -1,0 +1,61 @@
+# OpenDate configuration (non-secret). Secrets live in .env — never here.
+# Run `opendate providers` to see all provider keys and example models.
+
+# Where to pull dates/matches from: "tinder" (real) or "mock" (offline demo).
+source: tinder
+
+# Human-in-the-loop. When false, OpenDate shows each proposed action/message
+# and asks for confirmation before anything is sent. Set true to let it act.
+auto_send: false
+
+poll_interval: 120          # seconds between runtime-loop cycles
+max_actions_per_cycle: 5    # cap on messages/proposals per cycle
+max_screen_per_cycle: 10    # cap on candidates screened per cycle
+log_level: INFO
+
+# --- Who you want to meet -------------------------------------------------
+preferences:
+  looking_for: long-term            # casual | dating | long-term
+  also_open_to: [dating]
+  partner_traits: [witty, outdoorsy, ambitious, kind]
+  dealbreakers: [smoking]
+  interests: [climbing, live music, cooking, travel]
+  age_range:
+    min: 26
+    max: 34
+  distance_km: 25
+  voice: warm, curious, a little sarcastic
+
+# --- Which model to use ---------------------------------------------------
+llm:
+  provider: openai                  # any key from `opendate providers`
+  model: gpt-4o-mini                # omit to use the provider's default
+  temperature: 0.8
+  max_tokens: 600
+  streaming: false
+  # Try these in order if the primary provider fails:
+  fallbacks:
+    - provider: anthropic
+      model: claude-3-5-sonnet-latest
+    - provider: deepseek
+      model: deepseek-chat
+
+# --- Learning your voice --------------------------------------------------
+persona:
+  social_posts:
+    - data/my_posts.txt             # plain text (one post per line) or .json
+  chat_history:
+    - data/my_chats.json            # list of {"sender": "...", "text": "..."}
+  my_names: [me, "Your Name"]       # used to pick out YOUR lines in exports
+  profile_path: persona.json        # where the learned profile is cached
+  blend:
+    social_posts: 0.40
+    past_chats: 0.35
+    stated_preferences: 0.25
+
+# --- Safety guardrails (on by default) ------------------------------------
+safety:
+  require_consent_checks: true
+  allow_explicit: false
+  backoff_on_disinterest: true
+  max_followups_without_reply: 2

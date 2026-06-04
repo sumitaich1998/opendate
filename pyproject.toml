@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opendate"
+version = "0.1.0"
+description = "OpenDate — a vibe-dating AI agent that screens dates, carries conversations with purpose-built dating skills, and writes every message in your own voice."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "OpenDate contributors" }]
+keywords = ["ai", "agent", "dating", "llm", "litellm", "persona", "tinder"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Intended Audience :: Developers",
+    "Topic :: Communications :: Chat",
+    "License :: OSI Approved :: MIT License",
+]
+
+# Pinned to compatible lower bounds resolved with pip at build time.
+dependencies = [
+    "litellm>=1.87.0",
+    "httpx>=0.28.1",
+    "pydantic>=2.13.0",
+    "pydantic-settings>=2.14.0",
+    "pyyaml>=6.0.2",
+    "rich>=15.0.0",
+    "typer>=0.25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0",
+    "pytest-asyncio>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/opendate"
+Documentation = "https://github.com/your-org/opendate#readme"
+
+[project.scripts]
+opendate = "opendate.cli:main_entry"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+opendate = ["skills/registry/*/SKILL.md", "py.typed"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
