@@ -237,6 +237,75 @@ async def test_retries_transient_5xx_then_succeeds():
 
 
 @pytest.mark.asyncio
+async def test_field_drift_null_objects_do_not_crash():
+    """Real Tinder payloads often send ``null`` where an object/array is
+    expected. Defensive parsing must coerce those rather than crash."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v2/recs/core":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "results": [
+                            {
+                                "distance_mi": None,
+                                "user": {
+                                    "_id": "drift1",
+                                    "name": "Drift",
+                                    "bio": None,
+                                    "photos": None,
+                                    "user_interests": None,
+                                    "selected_descriptors": [
+                                        {
+                                            "prompt": None,
+                                            "choice_selections": [{"name": "x"}],
+                                        }
+                                    ],
+                                    "jobs": [{"company": None, "title": None}],
+                                    "schools": None,
+                                },
+                            },
+                            {"user": None},  # whole user object missing
+                        ]
+                    }
+                },
+            )
+        return httpx.Response(404, json={})
+
+    conn = TinderConnector(auth_token="t", transport=httpx.MockTransport(handler))
+    try:
+        recs = await conn.get_recommendations()
+        # Both candidates parse without raising; null fields become empties.
+        assert len(recs) == 2
+        assert recs[0].id == "drift1"
+        assert recs[0].photos == [] and recs[0].interests == [] and recs[0].jobs == []
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_match_with_null_person_does_not_crash():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/profile":
+            return httpx.Response(200, json={"data": {"_id": "me"}})
+        if request.url.path == "/v2/matches":
+            return httpx.Response(
+                200,
+                json={"data": {"matches": [{"_id": "m1", "person": None}]}},
+            )
+        return httpx.Response(404, json={})
+
+    conn = TinderConnector(auth_token="t", transport=httpx.MockTransport(handler))
+    try:
+        matches = await conn.get_matches()
+        assert matches[0].id == "m1"
+        assert matches[0].name == "" and matches[0].photos == []
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
 async def test_raises_clear_error_after_exhausting_retries():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, json={})

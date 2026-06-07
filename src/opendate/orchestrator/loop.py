@@ -938,13 +938,19 @@ class Orchestrator:
             log.warning("Send failed for %s: %s", match.name, exc)
 
     def _ask(self, prompt: str) -> bool:
-        if self._confirm is not None:
-            return self._confirm(prompt)
-        if not self.interactive:
-            return False
-        from rich.prompt import Confirm
+        try:
+            if self._confirm is not None:
+                return self._confirm(prompt)
+            if not self.interactive:
+                return False
+            from rich.prompt import Confirm
 
-        return Confirm.ask(prompt, default=False, console=self.console)
+            return Confirm.ask(prompt, default=False, console=self.console)
+        except (EOFError, KeyboardInterrupt):
+            # No interactive input available (piped/non-TTY) or the user
+            # aborted — treat as "no" so we propose without ever sending.
+            log.info("No confirmation input available; treating as 'do not send'.")
+            return False
 
     # ------------------------------------------------------------------ #
     # Reporting

@@ -286,6 +286,38 @@ async def test_self_critique_regenerates_weak_draft(
     assert "tell me more" not in (send.text or "").lower()
 
 
+# --- human-in-the-loop without a usable input stream -----------------------
+@pytest.mark.asyncio
+async def test_no_input_stream_proposes_without_error(
+    mock_connector, stub_router, skills_engine, persona, app_config
+):
+    """In interactive mode with no usable stdin (piped/non-TTY), the confirm
+    prompt raises EOFError. We must treat that as 'do not send' and still
+    PROPOSE the message, never turn it into an error skip."""
+
+    def eof_confirm(_prompt: str) -> bool:
+        raise EOFError("no input available")
+
+    orch = Orchestrator(
+        connector=mock_connector,
+        router=stub_router,
+        skills=skills_engine,
+        persona=persona,
+        config=app_config,
+        safety=SafetyGuard(app_config.safety),
+        console=_quiet_console(),
+        interactive=True,
+        confirm=eof_confirm,
+    )
+    actions = await orch.run_once()
+    sends = [a for a in actions if a.kind == "send"]
+    assert sends, "expected proposed messages despite no input stream"
+    assert all(not a.sent for a in sends)
+    assert mock_connector.sent == []
+    # No action should have been converted into an EOF error skip.
+    assert not any("EOF" in (a.reason or "") for a in actions)
+
+
 # --- per-match error isolation ---------------------------------------------
 @pytest.mark.asyncio
 async def test_one_bad_match_does_not_crash_the_loop(

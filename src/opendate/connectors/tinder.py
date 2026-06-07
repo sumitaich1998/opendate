@@ -47,6 +47,16 @@ _MATCH_PAGE = 60
 _MESSAGE_PAGE = 100
 
 
+def _obj(value: Any) -> dict[str, Any]:
+    """Coerce a possibly-``null`` JSON value to a dict (field-drift safe)."""
+    return value if isinstance(value, dict) else {}
+
+
+def _arr(value: Any) -> list[Any]:
+    """Coerce a possibly-``null`` JSON value to a list (field-drift safe)."""
+    return value if isinstance(value, list) else []
+
+
 def _parse_dt(value: Any) -> datetime | None:
     if not value or not isinstance(value, str):
         return None
@@ -190,42 +200,47 @@ class TinderConnector:
     # ------------------------------------------------------------------ #
     @staticmethod
     def _parse_candidate(result: dict[str, Any]) -> Candidate:
-        user = result.get("user", result)
+        # Tinder's unofficial payloads drift and frequently send ``null`` where
+        # an object/array is expected. ``_obj`` / ``_arr`` coerce those to empty
+        # containers so a single missing field never aborts the whole parse.
+        user = _obj(result.get("user")) or result
         distance_mi = result.get("distance_mi", user.get("distance_mi"))
         distance_km = (
             round(distance_mi * _MILES_TO_KM, 1)
-            if isinstance(distance_mi, (int, float))
+            if isinstance(distance_mi, (int, float)) and not isinstance(distance_mi, bool)
             else None
         )
         photos = [
             p.get("url")
-            for p in user.get("photos", [])
+            for p in _arr(user.get("photos"))
             if isinstance(p, dict) and p.get("url")
         ]
         interests = [
             i.get("name")
-            for i in user.get("user_interests", {}).get("selected_interests", [])
+            for i in _arr(_obj(user.get("user_interests")).get("selected_interests"))
             if isinstance(i, dict) and i.get("name")
         ]
         prompts: dict[str, str] = {}
-        for desc in user.get("selected_descriptors", []):
+        for desc in _arr(user.get("selected_descriptors")):
             if not isinstance(desc, dict):
                 continue
-            name = desc.get("name") or desc.get("prompt", {}).get("name")
-            choices = desc.get("choice_selections") or []
+            name = desc.get("name") or _obj(desc.get("prompt")).get("name")
+            choices = _arr(desc.get("choice_selections"))
             answer = ", ".join(
                 c.get("name", "") for c in choices if isinstance(c, dict)
             )
             if name and answer:
                 prompts[str(name)] = answer
         jobs = [
-            j.get("company", {}).get("name") or j.get("title", {}).get("name") or ""
-            for j in user.get("jobs", [])
+            _obj(j.get("company")).get("name")
+            or _obj(j.get("title")).get("name")
+            or ""
+            for j in _arr(user.get("jobs"))
             if isinstance(j, dict)
         ]
         schools = [
             s.get("name", "")
-            for s in user.get("schools", [])
+            for s in _arr(user.get("schools"))
             if isinstance(s, dict) and s.get("name")
         ]
         return Candidate(
@@ -243,10 +258,10 @@ class TinderConnector:
         )
 
     def _parse_match(self, raw: dict[str, Any]) -> Match:
-        person = raw.get("person", {}) or {}
+        person = _obj(raw.get("person"))
         photos = [
             p.get("url")
-            for p in person.get("photos", [])
+            for p in _arr(person.get("photos"))
             if isinstance(p, dict) and p.get("url")
         ]
         match = Match(
