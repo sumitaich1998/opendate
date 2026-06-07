@@ -1,0 +1,58 @@
+name: Bug report
+description: Report something that isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please do **not** include any
+        secrets (Tinder tokens, API keys) or other people's personal data.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including what you expected instead.
+      placeholder: When I run ..., I expected ... but got ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Ideally a minimal sequence, using `--mock` where possible.
+      placeholder: |
+        1. Run `python -m opendate --mock run --cycles 1 --no-interactive`
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: OpenDate version / commit
+      placeholder: "0.1.0 or commit SHA"
+    validations:
+      required: false
+  - type: input
+    id: python
+    attributes:
+      label: Python version & OS
+      placeholder: "Python 3.12 on macOS 14"
+    validations:
+      required: false
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Were you running in mock mode?
+      options:
+        - "Yes (--mock)"
+        - "No (real connector)"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste any traceback or log output. Double-check there are no secrets.
+      render: shell
+    validations:
+      required: false

@@ -1,0 +1,64 @@
+# OpenDate demo config — fully offline. Use with the global --mock flag:
+#   opendate --mock --config examples/config.demo.yaml persona build
+#   opendate --mock --config examples/config.demo.yaml run --cycles 1 --no-interactive
+
+source: mock
+auto_send: false
+
+poll_interval: 120
+max_actions_per_cycle: 5
+max_screen_per_cycle: 10
+log_level: INFO
+
+preferences:
+  looking_for: long-term
+  also_open_to: [dating]
+  partner_traits: [witty, outdoorsy, ambitious, kind]
+  must_haves: []
+  dealbreakers: [smoking]
+  interests: [climbing, live music, cooking, travel]
+  age_range:
+    min: 26
+    max: 34
+  distance_km: 25
+  like_threshold: 0.55
+  voice: warm, curious, a little sarcastic
+
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  temperature: 0.8
+  max_tokens: 600
+  streaming: false
+
+# Learn the demo voice from the bundled sample files in this folder.
+persona:
+  social_posts:
+    - examples/sample_posts.txt
+  chat_history:
+    - examples/sample_chats.json
+  my_names: [me, Alex]
+  profile_path: data/persona.json   # data/ is git-ignored
+  blend:
+    social_posts: 0.40
+    past_chats: 0.35
+    stated_preferences: 0.25
+
+safety:
+  require_consent_checks: true
+  allow_explicit: false
+  backoff_on_disinterest: true
+  refuse_minors: true
+  refuse_on_discomfort: true
+  max_followups_without_reply: 2
+
+pacing:
+  cooldown_hours: 8
+  reengage_after_days: 3
+  max_daily_actions: 25
+  never_double_text: true
+
+quality:
+  self_critique: true
+  min_score: 0.5
+  max_regenerations: 1

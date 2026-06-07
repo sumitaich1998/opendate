@@ -1,0 +1,47 @@
+name: Feature request
+description: Suggest an idea or improvement for OpenDate
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: What's frustrating or missing today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like OpenDate to do? A new skill, provider, flag, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you thought about.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Dating skill
+        - LLM provider
+        - Connector (Tinder / other app)
+        - Persona / voice
+        - Orchestrator / safety
+        - CLI / config
+        - Docs
+        - Other
+    validations:
+      required: false
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: Consent-first check
+      options:
+        - label: This request is consistent with OpenDate's consent-first, respectful ethos.
+          required: true
