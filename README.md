@@ -68,6 +68,7 @@ die on "hey". OpenDate does the busywork **as you** — not as a generic bot.
 - [Responsible use & safety](#-responsible-use--safety)
 - [Roadmap](#roadmap)
 - [FAQ](#faq)
+- [Documentation](#documentation)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -501,6 +502,22 @@ educational use — see [Responsible use & safety](#-responsible-use--safety).
 **Where is my data stored?**
 Persona profiles and conversation state live under git-ignored paths
 (`persona.json`, `data/`). Secrets stay in `.env` and are never logged.
+
+---
+
+## Documentation
+
+Full, in-depth documentation lives in [`docs/`](docs/README.md) and goes deeper
+than this README. Highlights:
+
+- [Getting started](docs/getting-started.md) — install + the keyless `--mock` quickstart
+- [Configuration](docs/configuration.md) — every `config.yaml` field + the `.env` secrets model
+- [Architecture](docs/architecture.md) · [Orchestrator](docs/orchestrator.md) — the runtime loop, stage machine, and internals
+- [Providers](docs/providers.md) · [Skills](docs/skills.md) · [Persona](docs/persona.md) · [Connectors](docs/connectors.md) — the subsystems in depth
+- [Safety](docs/safety.md) — the consent gate, pacing, and a responsible-use deep dive
+- [CLI reference](docs/cli.md) · [FAQ](docs/faq.md) · [Troubleshooting](docs/troubleshooting.md) · [Development](docs/development.md) · [Glossary](docs/glossary.md)
+
+Start at the [documentation index](docs/README.md) for the full map.
 
 ---
 
