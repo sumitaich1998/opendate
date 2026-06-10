@@ -5,12 +5,24 @@
 
 # OpenDate 💘
 
-### Your open-source AI wingman that dates in your own voice.
+### The vibe-dating AI agent that fetches dates, makes matches, and chats — in *your* voice.
 
-Bring your own Tinder token and any LLM key. OpenDate screens dates against your
-preferences, opens and carries conversations with purpose-built dating
-**skills**, and rewrites every message in a **persona learned from your own posts
-and chats** — consent-first, with optional human approval before anything sends.
+Your open-source AI wingman: bring your own Tinder token and any LLM key.
+OpenDate screens dates against your preferences, runs the conversation with
+purpose-built dating **skills**, and re-voices every message through a
+**persona learned from your own posts and chats** — consent-first, with human
+approval before anything sends.
+
+<br/>
+
+<table>
+  <tr>
+    <td align="center" width="170"><h3>🎯&nbsp;14</h3><sub><b>dating skills</b><br/>opener → banter → date</sub></td>
+    <td align="center" width="170"><h3>🔌&nbsp;19</h3><sub><b>LLM provider routes</b><br/>Western &amp; Chinese</sub></td>
+    <td align="center" width="170"><h3>🗣️&nbsp;1</h3><sub><b>voice — yours</b><br/>learned from your posts &amp; chats</sub></td>
+    <td align="center" width="170"><h3>🔑&nbsp;0</h3><sub><b>keys to try it</b><br/>fully-offline mock mode</sub></td>
+  </tr>
+</table>
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
