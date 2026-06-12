@@ -543,6 +543,21 @@ the [Code of Conduct](CODE_OF_CONDUCT.md) and report security issues per
 
 ---
 
+## Contributors
+
+Thanks to everyone who helps make OpenDate better:
+
+<a href="https://github.com/sumitaich1998/OpenDate/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=sumitaich1998/OpenDate" alt="Contributors" />
+</a>
+
+Want to see yourself here? Grab a
+[good first issue](https://github.com/sumitaich1998/OpenDate/issues) or add a
+new [skill](CONTRIBUTING.md#how-to-add-a-new-dating-skill) /
+[provider](CONTRIBUTING.md#how-to-add-a-new-llm-provider).
+
+---
+
 ## License
 
 [MIT](LICENSE) © 2026 Sumit Aich.
