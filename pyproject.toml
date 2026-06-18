@@ -39,7 +39,7 @@ dependencies = [
     "pydantic-settings>=2.14.0",
     "pyyaml>=6.0.2",
     "rich>=15.0.0",
-    "typer>=0.25.0",
+    "typer>=0.26.7",
 ]
 
 [project.optional-dependencies]
