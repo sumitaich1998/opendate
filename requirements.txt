@@ -2,7 +2,7 @@
 # Install with:  pip install -r requirements.txt
 # For an editable dev install (preferred), use:  pip install -e ".[dev]"
 
-litellm>=1.87.0
+litellm>=1.88.1
 httpx>=0.28.1
 pydantic>=2.13.0
 pydantic-settings>=2.14.0
